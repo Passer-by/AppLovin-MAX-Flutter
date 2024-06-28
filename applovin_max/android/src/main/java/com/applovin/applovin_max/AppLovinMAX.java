@@ -1,4 +1,4 @@
-package com.applovin.applovin_max;
+package android.src.main.java.com.applovin.applovin_max;
 
 import android.app.Activity;
 import android.content.Context;
@@ -836,6 +836,14 @@ public class AppLovinMAX
     {
         MaxRewardedAd rewardedAd = retrieveRewardedAd( adUnitId );
         rewardedAd.loadAd();
+    }
+
+    public void destroyRewardAd(final String adUnitId){
+        MaxRewardedAd result = mRewardedAds.remove( adUnitId );
+        if ( result != null )
+        {
+            result.destroy();
+        }
     }
 
     public void isRewardedAdReady(final String adUnitId, final Result result)
@@ -2288,6 +2296,12 @@ public class AppLovinMAX
             String adUnitId = call.argument( "ad_unit_id" );
             loadRewardedAd( adUnitId );
 
+            result.success( null );
+        }
+        else if ( "destroyRewardAd".equals( call.method) )
+        {
+            String adUnitId = call.argument( "ad_unit_id" );
+            destroyRewardAd( adUnitId );
             result.success( null );
         }
         else if ( "isRewardedAdReady".equals( call.method ) )
