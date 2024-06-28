@@ -667,6 +667,13 @@ class AppLovinMAX {
     });
   }
 
+  /// Cleans up system resources allocated for the rewardedAd.
+  static void destroyRewardedAd(String adUnitId) {
+    channel.invokeMethod('destroyRewardedAd', {
+      'ad_unit_id': adUnitId,
+    });
+  }
+
   /// Sets an extra parameter to the rewarded ad with the specified [adUnitId].
   static void setRewardedAdExtraParameter(String adUnitId, String key, String value) {
     channel.invokeMethod('setRewardedAdExtraParameter', {
