@@ -838,7 +838,7 @@ public class AppLovinMAX
         rewardedAd.loadAd();
     }
 
-    public void destroyRewardAd(final String adUnitId){
+    public void destroyRewardedAd(final String adUnitId){
         MaxRewardedAd result = mRewardedAds.remove( adUnitId );
         if ( result != null )
         {
@@ -2301,7 +2301,7 @@ public class AppLovinMAX
         else if ( "destroyRewardedAd".equals( call.method) )
         {
             String adUnitId = call.argument( "ad_unit_id" );
-            destroyRewardAd( adUnitId );
+            destroyRewardedAd( adUnitId );
             result.success( null );
         }
         else if ( "isRewardedAdReady".equals( call.method ) )
