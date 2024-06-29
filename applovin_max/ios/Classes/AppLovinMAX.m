@@ -792,6 +792,11 @@ static FlutterMethodChannel *ALSharedChannel;
     [rewardedAd loadAd];
 }
 
+- (void)destroyRewardedAdForAdUnitIdentifier:(NSString *)adUnitIdentifier
+{
+    [self.rewardedAds removeObjectForKey: adUnitIdentifier];
+}
+
 - (void)isRewardedAdReadyForAdUnitIdentifier:(NSString *)adUnitIdentifier result:(FlutterResult)result
 {
     MARewardedAd *rewardedAd = [self retrieveRewardedAdForAdUnitIdentifier: adUnitIdentifier];
@@ -2223,6 +2228,13 @@ static FlutterMethodChannel *ALSharedChannel;
         NSString *adUnitId = call.arguments[@"ad_unit_id"];
         [self loadRewardedAdForAdUnitIdentifier: adUnitId];
         
+        result(nil);
+    }
+    else if ( [@"destroyRewardedAd" isEqualToString: call.method] )
+    {
+        NSString *adUnitId = call.arguments[@"ad_unit_id"];
+        [self destroyRewardedAdForAdUnitIdentifier: adUnitId];
+
         result(nil);
     }
     else if ( [@"isRewardedAdReady" isEqualToString: call.method] )
