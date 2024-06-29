@@ -1,4 +1,4 @@
-package android.src.main.java.com.applovin.applovin_max;
+package com.applovin.applovin_max;
 
 import android.app.Activity;
 import android.content.Context;
