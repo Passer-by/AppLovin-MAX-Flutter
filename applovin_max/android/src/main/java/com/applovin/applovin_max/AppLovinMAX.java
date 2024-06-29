@@ -2298,7 +2298,7 @@ public class AppLovinMAX
 
             result.success( null );
         }
-        else if ( "destroyRewardAd".equals( call.method) )
+        else if ( "destroyRewardedAd".equals( call.method) )
         {
             String adUnitId = call.argument( "ad_unit_id" );
             destroyRewardAd( adUnitId );
