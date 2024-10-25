@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:applovin_max/src/ad_classes.dart';
 import 'package:applovin_max/src/ad_listeners.dart';
 import 'package:applovin_max/src/enums.dart';
-import 'package:applovin_max/src/targeting_data.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 export 'package:applovin_max/src/ad_classes.dart';
@@ -11,42 +11,33 @@ export 'package:applovin_max/src/ad_listeners.dart';
 export 'package:applovin_max/src/enums.dart';
 export 'package:applovin_max/src/max_ad_view.dart';
 export 'package:applovin_max/src/max_native_ad_view.dart';
-export 'package:applovin_max/src/targeting_data.dart';
+
+/// The current version of the SDK.
+const String _version = "4.0.2";
 
 /// Represents the AppLovin SDK.
 class AppLovinMAX {
-  /// The current version of the SDK.
-  static const version = "3.10.1";
-
   /// @nodoc
-  static MethodChannel channel = const MethodChannel('applovin_max');
+  static const MethodChannel _methodChannel = MethodChannel('applovin_max');
 
   static bool _hasInitializeInvoked = false;
   static final Completer<MaxConfiguration> _initializeCompleter = Completer<MaxConfiguration>();
-
-  /// The targeting data object for you to provide user or app data that will improve how we target ads.
-  static final TargetingData targetingData = TargetingData(channel);
 
   static AdViewAdListener? _bannerAdListener;
   static AdViewAdListener? _mrecAdListener;
   static InterstitialListener? _interstitialListener;
   static RewardedAdListener? _rewardedAdListener;
   static AppOpenAdListener? _appOpenAdListener;
+  static WidgetAdViewAdListener? _widgetAdViewAdListener;
 
   /// @nodoc
   ///
   /// Disabled dartdoc.
   AppLovinMAX();
 
-  /// Initializes the SDK.
-  ///
-  /// This method must be called only once. Calling it multiple times may
-  /// cause the returned future to never complete.
+  /// Initializes the SDK with the provided [sdkKey].
   ///
   /// For more information, see the [Initialize the SDK](https://developers.applovin.com/en/flutter/overview/integration).
-  ///
-  /// See [this GitHub issue](https://github.com/AppLovin/AppLovin-MAX-Flutter/issues/210)
-  /// for more details on why calling `initialize` multiple times can lead to issues.
   static Future<MaxConfiguration?> initialize(String sdkKey) async {
     if (_hasInitializeInvoked) {
       // Return a future object even when the actual value is not ready.
@@ -55,126 +46,128 @@ class AppLovinMAX {
 
     _hasInitializeInvoked = true;
 
-    // isInitialized() returns true when Flutter is performing hot restart
-    bool isPlatformSDKInitialized = await isInitialized() ?? false;
-    if (isPlatformSDKInitialized) {
-      Map conf = await channel.invokeMethod('getConfiguration');
+    _methodChannel.setMethodCallHandler(_handleNativeMethodCall);
+
+    try {
+      // isInitialized() returns true when Flutter is performing hot restart
+      bool isPlatformSDKInitialized = await isInitialized() ?? false;
+      if (isPlatformSDKInitialized) {
+        Map conf = await _methodChannel.invokeMethod('getConfiguration');
+        _initializeCompleter.complete(MaxConfiguration.fromJson(Map<String, dynamic>.from(conf)));
+        return _initializeCompleter.future;
+      }
+
+      var conf = await _methodChannel.invokeMethod('initialize', {
+        'plugin_version': _version,
+        'sdk_key': sdkKey,
+      }) as Map;
+
       _initializeCompleter.complete(MaxConfiguration.fromJson(Map<String, dynamic>.from(conf)));
+
       return _initializeCompleter.future;
+    } catch (e) {
+      debugPrint('Error initializing AppLovin SDK: $e');
+      _initializeCompleter.completeError(e);
+      return null;
     }
+  }
 
-    channel.setMethodCallHandler((MethodCall call) async {
-      var method = call.method;
-      var arguments = call.arguments;
+  static Future<dynamic> _handleNativeMethodCall(MethodCall call) async {
+    try {
+      final String method = call.method;
+      final Map<dynamic, dynamic>? arguments = call.arguments;
 
-      /// Banner Ad Events
-      if ("OnBannerAdLoadedEvent" == method) {
-        _bannerAdListener?.onAdLoadedCallback(createAd(arguments));
-      } else if ("OnBannerAdLoadFailedEvent" == method) {
-        _bannerAdListener?.onAdLoadFailedCallback(arguments["adUnitId"], createError(arguments));
-      } else if ("OnBannerAdClickedEvent" == method) {
-        _bannerAdListener?.onAdClickedCallback(createAd(arguments));
-      } else if ("OnBannerAdExpandedEvent" == method) {
-        _bannerAdListener?.onAdExpandedCallback(createAd(arguments));
-      } else if ("OnBannerAdCollapsedEvent" == method) {
-        _bannerAdListener?.onAdCollapsedCallback(createAd(arguments));
-      } else if ("OnBannerAdRevenuePaid" == method) {
-        _bannerAdListener?.onAdRevenuePaidCallback?.call(createAd(arguments));
+      if (arguments == null) {
+        throw ArgumentError('Arguments for method $method cannot be null.');
       }
 
-      /// MREC Ad Events
-      else if ("OnMRecAdLoadedEvent" == method) {
-        _mrecAdListener?.onAdLoadedCallback(createAd(arguments));
-      } else if ("OnMRecAdLoadFailedEvent" == method) {
-        _mrecAdListener?.onAdLoadFailedCallback(arguments["adUnitId"], createError(arguments));
-      } else if ("OnMRecAdClickedEvent" == method) {
-        _mrecAdListener?.onAdClickedCallback(createAd(arguments));
-      } else if ("OnMRecAdExpandedEvent" == method) {
-        _mrecAdListener?.onAdExpandedCallback(createAd(arguments));
-      } else if ("OnMRecAdCollapsedEvent" == method) {
-        _mrecAdListener?.onAdCollapsedCallback(createAd(arguments));
-      } else if ("OnMRecAdRevenuePaid" == method) {
-        _mrecAdListener?.onAdRevenuePaidCallback?.call(createAd(arguments));
+      final MaxAd? ad = arguments.containsKey('networkName') ? createMaxAd(arguments) : null;
+
+      final methodHandlers = {
+        /// Banner Ad Events
+        "OnBannerAdLoadedEvent": () => _bannerAdListener?.onAdLoadedCallback(ad!),
+        "OnBannerAdLoadFailedEvent": () => _bannerAdListener?.onAdLoadFailedCallback(arguments["adUnitId"], createMaxError(arguments)),
+        "OnBannerAdClickedEvent": () => _bannerAdListener?.onAdClickedCallback(ad!),
+        "OnBannerAdExpandedEvent": () => _bannerAdListener?.onAdExpandedCallback(ad!),
+        "OnBannerAdCollapsedEvent": () => _bannerAdListener?.onAdCollapsedCallback(ad!),
+        "OnBannerAdRevenuePaid": () => _bannerAdListener?.onAdRevenuePaidCallback?.call(ad!),
+
+        /// MREC Ad Events
+        "OnMRecAdLoadedEvent": () => _mrecAdListener?.onAdLoadedCallback(ad!),
+        "OnMRecAdLoadFailedEvent": () => _mrecAdListener?.onAdLoadFailedCallback(arguments["adUnitId"], createMaxError(arguments)),
+        "OnMRecAdClickedEvent": () => _mrecAdListener?.onAdClickedCallback(ad!),
+        "OnMRecAdExpandedEvent": () => _mrecAdListener?.onAdExpandedCallback(ad!),
+        "OnMRecAdCollapsedEvent": () => _mrecAdListener?.onAdCollapsedCallback(ad!),
+        "OnMRecAdRevenuePaid": () => _mrecAdListener?.onAdRevenuePaidCallback?.call(ad!),
+
+        /// Interstitial Ad Events
+        "OnInterstitialLoadedEvent": () => _interstitialListener?.onAdLoadedCallback(ad!),
+        "OnInterstitialLoadFailedEvent": () => _interstitialListener?.onAdLoadFailedCallback(arguments["adUnitId"], createMaxError(arguments)),
+        "OnInterstitialClickedEvent": () => _interstitialListener?.onAdClickedCallback(ad!),
+        "OnInterstitialDisplayedEvent": () => _interstitialListener?.onAdDisplayedCallback(ad!),
+        "OnInterstitialAdFailedToDisplayEvent": () =>
+            _interstitialListener?.onAdDisplayFailedCallback(createMaxAd(arguments['ad']), createMaxError(arguments['error'])),
+        "OnInterstitialHiddenEvent": () => _interstitialListener?.onAdHiddenCallback(ad!),
+        "OnInterstitialAdRevenuePaid": () => _interstitialListener?.onAdRevenuePaidCallback?.call(ad!),
+
+        /// Rewarded Ad Events
+        "OnRewardedAdLoadedEvent": () => _rewardedAdListener?.onAdLoadedCallback(ad!),
+        "OnRewardedAdLoadFailedEvent": () => _rewardedAdListener?.onAdLoadFailedCallback(arguments["adUnitId"], createMaxError(arguments)),
+        "OnRewardedAdClickedEvent": () => _rewardedAdListener?.onAdClickedCallback(ad!),
+        "OnRewardedAdDisplayedEvent": () => _rewardedAdListener?.onAdDisplayedCallback(ad!),
+        "OnRewardedAdFailedToDisplayEvent": () =>
+            _rewardedAdListener?.onAdDisplayFailedCallback(createMaxAd(arguments['ad']), createMaxError(arguments['error'])),
+        "OnRewardedAdHiddenEvent": () => _rewardedAdListener?.onAdHiddenCallback(ad!),
+        "OnRewardedAdReceivedRewardEvent": () {
+          final MaxReward reward = MaxReward(arguments["rewardAmount"], arguments["rewardLabel"]);
+          _rewardedAdListener?.onAdReceivedRewardCallback(ad!, reward);
+        },
+        "OnRewardedAdRevenuePaid": () => _rewardedAdListener?.onAdRevenuePaidCallback?.call(ad!),
+
+        /// App Open Ad Events
+        "OnAppOpenAdLoadedEvent": () => _appOpenAdListener?.onAdLoadedCallback(ad!),
+        "OnAppOpenAdLoadFailedEvent": () => _appOpenAdListener?.onAdLoadFailedCallback(arguments["adUnitId"], createMaxError(arguments)),
+        "OnAppOpenAdClickedEvent": () => _appOpenAdListener?.onAdClickedCallback(ad!),
+        "OnAppOpenAdDisplayedEvent": () => _appOpenAdListener?.onAdDisplayedCallback(ad!),
+        "OnAppOpenAdFailedToDisplayEvent": () =>
+            _appOpenAdListener?.onAdDisplayFailedCallback(createMaxAd(arguments['ad']), createMaxError(arguments['error'])),
+        "OnAppOpenAdHiddenEvent": () => _appOpenAdListener?.onAdHiddenCallback(ad!),
+        "OnAppOpenAdRevenuePaid": () => _appOpenAdListener?.onAdRevenuePaidCallback?.call(ad!),
+
+        /// Widget AdView Ad Events
+        "OnWidgetAdViewAdLoadedEvent": () => _widgetAdViewAdListener?.onAdLoadedCallback(ad!),
+        "OnWidgetAdViewAdLoadFailedEvent": () => _widgetAdViewAdListener?.onAdLoadFailedCallback(arguments["adUnitId"], createMaxError(arguments)),
+      };
+
+      final handler = methodHandlers[method];
+      if (handler != null) {
+        handler();
+      } else {
+        throw MissingPluginException('No handler for method $method');
       }
-
-      /// Interstitial Ad Events
-      else if ("OnInterstitialLoadedEvent" == method) {
-        _interstitialListener?.onAdLoadedCallback.call(createAd(arguments));
-      } else if ("OnInterstitialLoadFailedEvent" == method) {
-        _interstitialListener?.onAdLoadFailedCallback(arguments["adUnitId"], createError(arguments));
-      } else if ("OnInterstitialClickedEvent" == method) {
-        _interstitialListener?.onAdClickedCallback.call(createAd(arguments));
-      } else if ("OnInterstitialDisplayedEvent" == method) {
-        _interstitialListener?.onAdDisplayedCallback.call(createAd(arguments));
-      } else if ("OnInterstitialAdFailedToDisplayEvent" == method) {
-        _interstitialListener?.onAdDisplayFailedCallback(createAd(arguments["ad"]), createError(arguments["error"]));
-      } else if ("OnInterstitialHiddenEvent" == method) {
-        _interstitialListener?.onAdHiddenCallback.call(createAd(arguments));
-      } else if ("OnInterstitialAdRevenuePaid" == method) {
-        _interstitialListener?.onAdRevenuePaidCallback?.call(createAd(arguments));
-      }
-
-      /// Rewarded Ad Events
-      else if ("OnRewardedAdLoadedEvent" == method) {
-        _rewardedAdListener?.onAdLoadedCallback.call(createAd(arguments));
-      } else if ("OnRewardedAdLoadFailedEvent" == method) {
-        _rewardedAdListener?.onAdLoadFailedCallback(arguments["adUnitId"], createError(arguments));
-      } else if ("OnRewardedAdClickedEvent" == method) {
-        _rewardedAdListener?.onAdClickedCallback.call(createAd(arguments));
-      } else if ("OnRewardedAdDisplayedEvent" == method) {
-        _rewardedAdListener?.onAdDisplayedCallback.call(createAd(arguments));
-      } else if ("OnRewardedAdFailedToDisplayEvent" == method) {
-        _rewardedAdListener?.onAdDisplayFailedCallback(createAd(arguments["ad"]), createError(arguments["error"]));
-      } else if ("OnRewardedAdHiddenEvent" == method) {
-        _rewardedAdListener?.onAdHiddenCallback.call(createAd(arguments));
-      } else if ("OnRewardedAdReceivedRewardEvent" == method) {
-        var reward = MaxReward(arguments["rewardAmount"], arguments["rewardLabel"]);
-        _rewardedAdListener?.onAdReceivedRewardCallback(createAd(arguments), reward);
-      } else if ("OnRewardedAdRevenuePaid" == method) {
-        _rewardedAdListener?.onAdRevenuePaidCallback?.call(createAd(arguments));
-      }
-
-      /// App Open Ad Events
-      else if ("OnAppOpenAdLoadedEvent" == method) {
-        _appOpenAdListener?.onAdLoadedCallback.call(createAd(arguments));
-      } else if ("OnAppOpenAdLoadFailedEvent" == method) {
-        _appOpenAdListener?.onAdLoadFailedCallback(arguments["adUnitId"], createError(arguments));
-      } else if ("OnAppOpenAdClickedEvent" == method) {
-        _appOpenAdListener?.onAdClickedCallback.call(createAd(arguments));
-      } else if ("OnAppOpenAdDisplayedEvent" == method) {
-        _appOpenAdListener?.onAdDisplayedCallback.call(createAd(arguments));
-      } else if ("OnAppOpenAdFailedToDisplayEvent" == method) {
-        _appOpenAdListener?.onAdDisplayFailedCallback(createAd(arguments["ad"]), createError(arguments["error"]));
-      } else if ("OnAppOpenAdHiddenEvent" == method) {
-        _appOpenAdListener?.onAdHiddenCallback.call(createAd(arguments));
-      } else if ("OnAppOpenAdRevenuePaid" == method) {
-        _appOpenAdListener?.onAdRevenuePaidCallback?.call(createAd(arguments));
-      }
-    });
-
-    var conf = await channel.invokeMethod('initialize', {
-      'plugin_version': version,
-      'sdk_key': sdkKey,
-    }) as Map;
-
-    _initializeCompleter.complete(MaxConfiguration.fromJson(Map<String, dynamic>.from(conf)));
-
-    return _initializeCompleter.future;
+    } catch (e) {
+      debugPrint('Error handling native method call ${call.method} with arguments ${call.arguments}: $e');
+    }
   }
 
   /// @nodoc
-  static MaxAd createAd(dynamic arguments) {
+  static MaxAd createMaxAd(dynamic arguments) {
     return MaxAd.fromJson(Map<String, dynamic>.from(arguments));
   }
 
   /// @nodoc
-  static MaxError createError(dynamic arguments) {
+  static MaxError createMaxError(dynamic arguments) {
     return MaxError.fromJson(Map<String, dynamic>.from(arguments));
   }
 
   /// Checks if the SDK has fully been initialized without errors.
-  static Future<bool?> isInitialized() {
-    return channel.invokeMethod('isInitialized');
+  static Future<bool?> isInitialized() async {
+    try {
+      return _methodChannel.invokeMethod('isInitialized');
+    } catch (e) {
+      debugPrint('Error checking if initialized: $e');
+      return null;
+    }
   }
 
   /// Displays the Mediation Debugger.
@@ -186,28 +179,18 @@ class AppLovinMAX {
   ///
   /// [Mediation Debugger](https://developers.applovin.com/en/flutter/testing-networks/mediation-debugger)
   static void showMediationDebugger() {
-    channel.invokeMethod('showMediationDebugger');
+    _methodChannel.invokeMethod('showMediationDebugger');
   }
 
   //
   // PRIVACY APIs
   //
 
-  /// Returns an integer that encodes the state of the consent dialog.
-  ///
-  /// To learn more about how this information is encoded in the integer, see [ConsentDialogState].
-  ///
-  /// [Consent Flags in GDPR and Other Regions](https://developers.applovin.com/en/flutter/overview/privacy#consent-and-age-related-flags-in-gdpr-and-other-regions)
-  @Deprecated('Check consentFlowUserGeography in the return object of initialize() instead.')
-  static Future<int?> getConsentDialogState() {
-    return channel.invokeMethod('getConsentDialogState');
-  }
-
   /// Sets whether or not the user has provided consent for interest-based advertising.
   ///
   /// [Consent Flags in GDPR and Other Regions](https://developers.applovin.com/en/flutter/overview/privacy#consent-and-age-related-flags-in-gdpr-and-other-regions)
   static void setHasUserConsent(bool hasUserConsent) {
-    channel.invokeMethod('setHasUserConsent', {
+    _methodChannel.invokeMethod('setHasUserConsent', {
       'value': hasUserConsent,
     });
   }
@@ -216,23 +199,7 @@ class AppLovinMAX {
   ///
   /// [Consent Flags in GDPR and Other Regions](https://developers.applovin.com/en/flutter/overview/privacy#consent-and-age-related-flags-in-gdpr-and-other-regions)
   static Future<bool?> hasUserConsent() {
-    return channel.invokeMethod('hasUserConsent');
-  }
-
-  /// Marks the user as age-restricted.
-  ///
-  /// [Prohibition on Personal Information from Children](https://developers.applovin.com/en/flutter/overview/privacy#prohibition-on-ads-to-and-personal-information-from-children-and-apps-exclusively-designed-for-or-exclusively-directed-to-children)
-  static void setIsAgeRestrictedUser(bool isAgeRestrictedUser) {
-    channel.invokeMethod('setIsAgeRestrictedUser', {
-      'value': isAgeRestrictedUser,
-    });
-  }
-
-  /// Checks if the user is age-restricted.
-  ///
-  /// [Prohibition on Personal Information from Children](https://developers.applovin.com/en/flutter/overview/privacy#prohibition-on-ads-to-and-personal-information-from-children-and-apps-exclusively-designed-for-or-exclusively-directed-to-children)
-  static Future<bool?> isAgeRestrictedUser() {
-    return channel.invokeMethod('isAgeRestrictedUser');
+    return _methodChannel.invokeMethod('hasUserConsent');
   }
 
   /// Sets true to indicate that the user has opted out of interest-based advertising.
@@ -241,7 +208,7 @@ class AppLovinMAX {
   ///
   /// [California Consumer Privacy Act (“CCPA”)](https://developers.applovin.com/en/flutter/overview/privacy#multi-state-consumer-privacy-laws)
   static void setDoNotSell(bool isDoNotSell) {
-    channel.invokeMethod('setDoNotSell', {
+    _methodChannel.invokeMethod('setDoNotSell', {
       'value': isDoNotSell,
     });
   }
@@ -252,7 +219,7 @@ class AppLovinMAX {
   ///
   /// [California Consumer Privacy Act (“CCPA”)](https://developers.applovin.com/en/flutter/overview/privacy#multi-state-consumer-privacy-laws)
   static Future<bool?> isDoNotSell() {
-    return channel.invokeMethod('isDoNotSell');
+    return _methodChannel.invokeMethod('isDoNotSell');
   }
 
   //
@@ -265,7 +232,7 @@ class AppLovinMAX {
   ///
   /// [Setting an Internal User ID](https://developers.applovin.com/en/advanced-features/s2s-rewarded-callback-api#setting-an-internal-user-id)
   static void setUserId(String userId) {
-    channel.invokeMethod('setUserId', {
+    _methodChannel.invokeMethod('setUserId', {
       'value': userId,
     });
   }
@@ -276,7 +243,7 @@ class AppLovinMAX {
   ///
   /// [Mute Audio](https://developers.applovin.com/en/flutter/overview/advanced-settings#mute-audio)
   static void setMuted(bool muted) {
-    channel.invokeMethod('setMuted', {
+    _methodChannel.invokeMethod('setMuted', {
       'value': muted,
     });
   }
@@ -285,7 +252,7 @@ class AppLovinMAX {
   ///
   /// [Enable Verbose Logging](https://developers.applovin.com/en/flutter/overview/advanced-settings#enable-verbose-logging)
   static void setVerboseLogging(bool enabled) {
-    channel.invokeMethod('setVerboseLogging', {
+    _methodChannel.invokeMethod('setVerboseLogging', {
       'value': enabled,
     });
   }
@@ -294,7 +261,7 @@ class AppLovinMAX {
   ///
   /// [Enable Creative Debugger](https://developers.applovin.com/en/flutter/testing-networks/creative-debugger)
   static void setCreativeDebuggerEnabled(bool enabled) {
-    channel.invokeMethod('setCreativeDebuggerEnabled', {
+    _methodChannel.invokeMethod('setCreativeDebuggerEnabled', {
       'value': enabled,
     });
   }
@@ -302,8 +269,8 @@ class AppLovinMAX {
   /// Enables devices to receive test ads by passing in the advertising identifier (IDFA or IDFV) of
   /// each test device. Refer to AppLovin logs for the IDFA or IDFV of your current device.
   ///
-  static void setTestDeviceAdvertisingIds(List advertisingIdentifiers) {
-    channel.invokeMethod('setTestDeviceAdvertisingIds', {
+  static void setTestDeviceAdvertisingIds(List<String> advertisingIdentifiers) {
+    _methodChannel.invokeMethod('setTestDeviceAdvertisingIds', {
       'value': advertisingIdentifiers,
     });
   }
@@ -312,14 +279,14 @@ class AppLovinMAX {
   ///
   /// [Location Passing](https://developers.applovin.com/en/flutter/overview/data-and-keyword-passing#location-passing)
   static void setLocationCollectionEnabled(bool enabled) {
-    channel.invokeMethod('setLocationCollectionEnabled', {
+    _methodChannel.invokeMethod('setLocationCollectionEnabled', {
       'value': enabled,
     });
   }
 
   /// Sets an extra parameter to pass to the AppLovin server.
   static void setExtraParameter(String key, String? value) {
-    channel.invokeMethod('setExtraParameter', {
+    _methodChannel.invokeMethod('setExtraParameter', {
       'key': key,
       'value': value,
     });
@@ -327,15 +294,15 @@ class AppLovinMAX {
 
   /// Sets a list of the ad units for the SDK to initialize only those networks.
   /// Should be set before initializing the SDK.
-  static void setInitializationAdUnitIds(List adUnitIds) {
-    channel.invokeMethod('setInitializationAdUnitIds', {
+  static void setInitializationAdUnitIds(List<String> adUnitIds) {
+    _methodChannel.invokeMethod('setInitializationAdUnitIds', {
       'value': adUnitIds,
     });
   }
 
   /// Enables the MAX Terms and Privacy Policy Flow.
   static void setTermsAndPrivacyPolicyFlowEnabled(bool enabled) {
-    channel.invokeMethod('setTermsAndPrivacyPolicyFlowEnabled', {
+    _methodChannel.invokeMethod('setTermsAndPrivacyPolicyFlowEnabled', {
       'value': enabled,
     });
   }
@@ -343,7 +310,7 @@ class AppLovinMAX {
   /// The URL of your company’s privacy policy, as a string. This is required in
   /// order to enable the Terms Flow.
   static void setPrivacyPolicyUrl(String urlString) {
-    channel.invokeMethod('setPrivacyPolicyUrl', {
+    _methodChannel.invokeMethod('setPrivacyPolicyUrl', {
       'value': urlString,
     });
   }
@@ -351,7 +318,7 @@ class AppLovinMAX {
   /// The URL of your company’s terms of service, as a string. This is optional;
   /// you can enable the Terms Flow with or without it.
   static void setTermsOfServiceUrl(String urlString) {
-    channel.invokeMethod('setTermsOfServiceUrl', {
+    _methodChannel.invokeMethod('setTermsOfServiceUrl', {
       'value': urlString,
     });
   }
@@ -359,7 +326,7 @@ class AppLovinMAX {
   /// Set debug user geography. You may use this to test CMP flow by setting
   /// this to [ConsentFlowUserGeography.GDPR].
   static void setConsentFlowDebugUserGeography(ConsentFlowUserGeography userGeography) {
-    channel.invokeMethod('setConsentFlowDebugUserGeography', {
+    _methodChannel.invokeMethod('setConsentFlowDebugUserGeography', {
       'value': userGeography.value,
     });
   }
@@ -370,14 +337,14 @@ class AppLovinMAX {
   /// The function returns when the flow finishes showing. On success, returns
   /// null. On failure, returns [MaxCMPError].
   static Future<MaxCMPError?> showCmpForExistingUser() async {
-    Map? error = await channel.invokeMethod('showCmpForExistingUser') as Map?;
+    Map? error = await _methodChannel.invokeMethod('showCmpForExistingUser') as Map?;
     if (error == null) return null;
     return MaxCMPError.fromJson(Map<String, dynamic>.from(error));
   }
 
   /// Returns true if a supported CMP SDK is detected.
   static Future<bool?> hasSupportedCmp() {
-    return channel.invokeMethod('hasSupportedCmp');
+    return _methodChannel.invokeMethod('hasSupportedCmp');
   }
 
   //
@@ -385,7 +352,7 @@ class AppLovinMAX {
   //
 
   /// Sets an [AdViewAdListener] listener with which you can receive notifications about ad events.
-  static void setBannerListener(AdViewAdListener listener) {
+  static void setBannerListener(AdViewAdListener? listener) {
     _bannerAdListener = listener;
   }
 
@@ -393,7 +360,7 @@ class AppLovinMAX {
   ///
   /// [Creating a Banner](https://developers.applovin.com/en/flutter/ad-formats/banner-mrec-ads)
   static void createBanner(String adUnitId, AdViewPosition position) {
-    channel.invokeMethod('createBanner', {
+    _methodChannel.invokeMethod('createBanner', {
       'ad_unit_id': adUnitId,
       'position': position.value,
     });
@@ -403,7 +370,7 @@ class AppLovinMAX {
   ///
   /// Only hex strings ('#xxxxxx') are accepted.
   static void setBannerBackgroundColor(String adUnitId, String hexColorCodeString) {
-    channel.invokeMethod('setBannerBackgroundColor', {
+    _methodChannel.invokeMethod('setBannerBackgroundColor', {
       'ad_unit_id': adUnitId,
       'hex_color_code': hexColorCodeString,
     });
@@ -413,7 +380,7 @@ class AppLovinMAX {
   ///
   /// [Setting an Ad Placement Name](https://developers.applovin.com/en/advanced-features/s2s-impression-level-api#setting-an-ad-placement-name)
   static void setBannerPlacement(String adUnitId, String placement) {
-    channel.invokeMethod('setBannerPlacement', {
+    _methodChannel.invokeMethod('setBannerPlacement', {
       'ad_unit_id': adUnitId,
       'placement': placement,
     });
@@ -421,7 +388,7 @@ class AppLovinMAX {
 
   /// Updates the banner position with the specified [adUnitId].
   static void updateBannerPosition(String adUnitId, AdViewPosition position) {
-    channel.invokeMethod('updateBannerPosition', {
+    _methodChannel.invokeMethod('updateBannerPosition', {
       'ad_unit_id': adUnitId,
       'position': position.value,
     });
@@ -434,7 +401,7 @@ class AppLovinMAX {
   ///
   /// [Adaptive Banners](https://developers.applovin.com/en/flutter/ad-formats/banner-mrec-ads#adaptive-banners)
   static void setBannerExtraParameter(String adUnitId, String key, String value) {
-    channel.invokeMethod('setBannerExtraParameter', {
+    _methodChannel.invokeMethod('setBannerExtraParameter', {
       'ad_unit_id': adUnitId,
       'key': key,
       'value': value,
@@ -445,7 +412,7 @@ class AppLovinMAX {
   ///
   /// [Displaying a Banner](https://developers.applovin.com/en/flutter/ad-formats/banner-mrec-ads#displaying-a-banner)
   static void showBanner(String adUnitId) {
-    channel.invokeMethod('showBanner', {
+    _methodChannel.invokeMethod('showBanner', {
       'ad_unit_id': adUnitId,
     });
   }
@@ -454,21 +421,21 @@ class AppLovinMAX {
   ///
   /// [Displaying a Banner](https://developers.applovin.com/en/flutter/ad-formats/banner-mrec-ads#displaying-a-banner)
   static void hideBanner(String adUnitId) {
-    channel.invokeMethod('hideBanner', {
+    _methodChannel.invokeMethod('hideBanner', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Starts or resumes auto-refreshing of the banner for the specified [adUnitId].
   static void startBannerAutoRefresh(String adUnitId) {
-    channel.invokeMethod('startBannerAutoRefresh', {
+    _methodChannel.invokeMethod('startBannerAutoRefresh', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Pauses auto-refreshing of the banner for the specified [adUnitId].
   static void stopBannerAutoRefresh(String adUnitId) {
-    channel.invokeMethod('stopBannerAutoRefresh', {
+    _methodChannel.invokeMethod('stopBannerAutoRefresh', {
       'ad_unit_id': adUnitId,
     });
   }
@@ -477,21 +444,21 @@ class AppLovinMAX {
   /// NOTE: The [createBanner] method loads the first banner ad and initiates an automated banner refresh process.
   /// You only need to call this method if you pause banner refresh.
   static void loadBanner(String adUnitId) {
-    channel.invokeMethod('loadBanner', {
+    _methodChannel.invokeMethod('loadBanner', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Cleans up system resources allocated for the banner.
   static void destroyBanner(String adUnitId) {
-    channel.invokeMethod('destroyBanner', {
+    _methodChannel.invokeMethod('destroyBanner', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Gets the adaptive banner size for the provided width.
   static Future<double?> getAdaptiveBannerHeightForWidth(double width) {
-    return channel.invokeMethod('getAdaptiveBannerHeightForWidth', {
+    return _methodChannel.invokeMethod('getAdaptiveBannerHeightForWidth', {
       'width': width,
     });
   }
@@ -501,7 +468,7 @@ class AppLovinMAX {
   //
 
   /// Sets an [AdViewAdListener] listener with which you can receive notifications about ad events.
-  static void setMRecListener(AdViewAdListener listener) {
+  static void setMRecListener(AdViewAdListener? listener) {
     _mrecAdListener = listener;
   }
 
@@ -509,7 +476,7 @@ class AppLovinMAX {
   ///
   /// [Programmatic Method](https://developers.applovin.com/en/flutter/ad-formats/banner-mrec-ads#loading-a-banner-or-mrec)
   static void createMRec(String adUnitId, AdViewPosition position) {
-    channel.invokeMethod('createMRec', {
+    _methodChannel.invokeMethod('createMRec', {
       'ad_unit_id': adUnitId,
       'position': position.value,
     });
@@ -519,7 +486,7 @@ class AppLovinMAX {
   ///
   /// [Setting an Ad Placement Name](https://developers.applovin.com/en/advanced-features/s2s-impression-level-api#setting-an-ad-placement-name)
   static void setMRecPlacement(String adUnitId, String placement) {
-    channel.invokeMethod('setMRecPlacement', {
+    _methodChannel.invokeMethod('setMRecPlacement', {
       'ad_unit_id': adUnitId,
       'placement': placement,
     });
@@ -527,7 +494,7 @@ class AppLovinMAX {
 
   /// Updates the MREC position with the specified [adUnitId].
   static void updateMRecPosition(String adUnitId, AdViewPosition position) {
-    channel.invokeMethod('updateMRecPosition', {
+    _methodChannel.invokeMethod('updateMRecPosition', {
       'ad_unit_id': adUnitId,
       'position': position.value,
     });
@@ -535,7 +502,7 @@ class AppLovinMAX {
 
   /// Sets an extra parameter to the MREC with the specified [adUnitId].
   static void setMRecExtraParameter(String adUnitId, String key, String value) {
-    channel.invokeMethod('setMRecExtraParameter', {
+    _methodChannel.invokeMethod('setMRecExtraParameter', {
       'ad_unit_id': adUnitId,
       'key': key,
       'value': value,
@@ -544,28 +511,28 @@ class AppLovinMAX {
 
   /// Shows the MREC with the specified [adUnitId].
   static void showMRec(String adUnitId) {
-    channel.invokeMethod('showMRec', {
+    _methodChannel.invokeMethod('showMRec', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Hides the MREC with the specified [adUnitId].
   static void hideMRec(String adUnitId) {
-    channel.invokeMethod('hideMRec', {
+    _methodChannel.invokeMethod('hideMRec', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Starts or resumes auto-refreshing of the MREC for the specified [adUnitId].
   static void startMRecAutoRefresh(String adUnitId) {
-    channel.invokeMethod('startMRecAutoRefresh', {
+    _methodChannel.invokeMethod('startMRecAutoRefresh', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Pauses auto-refreshing of the MREC for the specified [adUnitId].
   static void stopMRecAutoRefresh(String adUnitId) {
-    channel.invokeMethod('stopMRecAutoRefresh', {
+    _methodChannel.invokeMethod('stopMRecAutoRefresh', {
       'ad_unit_id': adUnitId,
     });
   }
@@ -574,14 +541,14 @@ class AppLovinMAX {
   /// NOTE: The [createMRec] method loads the first MREC ad and initiates an automated MREC refresh process.
   /// You only need to call this method if you pause MREC refresh.
   static void loadMRec(String adUnitId) {
-    channel.invokeMethod('loadMRec', {
+    _methodChannel.invokeMethod('loadMRec', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Cleans up system resources allocated for the MREC.
   static void destroyMRec(String adUnitId) {
-    channel.invokeMethod('destroyMRec', {
+    _methodChannel.invokeMethod('destroyMRec', {
       'ad_unit_id': adUnitId,
     });
   }
@@ -591,7 +558,7 @@ class AppLovinMAX {
   //
 
   /// Sets an [InterstitialListener] listener with which you can receive notifications about ad events.
-  static void setInterstitialListener(InterstitialListener listener) {
+  static void setInterstitialListener(InterstitialListener? listener) {
     _interstitialListener = listener;
   }
 
@@ -599,14 +566,14 @@ class AppLovinMAX {
   ///
   /// [Loading an Interstitial Ad](https://developers.applovin.com/en/flutter/ad-formats/interstitial-ads#loading-an-interstitial-ad)
   static void loadInterstitial(String adUnitId) {
-    channel.invokeMethod('loadInterstitial', {
+    _methodChannel.invokeMethod('loadInterstitial', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Check if the ad is ready to be shown with the specified [adUnitId].
   static Future<bool?> isInterstitialReady(String adUnitId) {
-    return channel.invokeMethod('isInterstitialReady', {
+    return _methodChannel.invokeMethod('isInterstitialReady', {
       'ad_unit_id': adUnitId,
     });
   }
@@ -614,8 +581,8 @@ class AppLovinMAX {
   /// Shows the interstitial ad with the specified [adUnitId].
   ///
   /// [Showing an Interstitial Ad](https://developers.applovin.com/en/flutter/ad-formats/interstitial-ads#showing-an-interstitial-ad)
-  static void showInterstitial(String adUnitId, {placement, customData}) {
-    channel.invokeMethod('showInterstitial', {
+  static void showInterstitial(String adUnitId, {String? placement, String? customData}) {
+    _methodChannel.invokeMethod('showInterstitial', {
       'ad_unit_id': adUnitId,
       'placement': placement,
       'custom_data': customData,
@@ -624,7 +591,7 @@ class AppLovinMAX {
 
   /// Sets an extra parameter to the interstitial ad with the specified [adUnitId].
   static void setInterstitialExtraParameter(String adUnitId, String key, String value) {
-    channel.invokeMethod('setInterstitialExtraParameter', {
+    _methodChannel.invokeMethod('setInterstitialExtraParameter', {
       'ad_unit_id': adUnitId,
       'key': key,
       'value': value,
@@ -636,7 +603,7 @@ class AppLovinMAX {
   //
 
   /// Sets a [RewardedAdListener] listener with which you can receive notifications about ad events.
-  static void setRewardedAdListener(RewardedAdListener listener) {
+  static void setRewardedAdListener(RewardedAdListener? listener) {
     _rewardedAdListener = listener;
   }
 
@@ -644,14 +611,14 @@ class AppLovinMAX {
   ///
   /// [Loading a Rewarded Ad](https://developers.applovin.com/en/flutter/ad-formats/rewarded-ads/#loading-a-rewarded-ad)
   static void loadRewardedAd(String adUnitId) {
-    channel.invokeMethod('loadRewardedAd', {
+    _methodChannel.invokeMethod('loadRewardedAd', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Check if the ad is ready to be shown with the specified [adUnitId].
   static Future<bool?> isRewardedAdReady(String adUnitId) {
-    return channel.invokeMethod('isRewardedAdReady', {
+    return _methodChannel.invokeMethod('isRewardedAdReady', {
       'ad_unit_id': adUnitId,
     });
   }
@@ -659,8 +626,8 @@ class AppLovinMAX {
   /// Shows the rewarded ad with the specified [adUnitId].
   ///
   /// [Showing a Rewarded Ad](https://developers.applovin.com/en/flutter/ad-formats/rewarded-ads#showing-a-rewarded-ad)
-  static void showRewardedAd(String adUnitId, {placement, customData}) {
-    channel.invokeMethod('showRewardedAd', {
+  static void showRewardedAd(String adUnitId, {String? placement, String? customData}) {
+    _methodChannel.invokeMethod('showRewardedAd', {
       'ad_unit_id': adUnitId,
       'placement': placement,
       'custom_data': customData,
@@ -676,7 +643,7 @@ class AppLovinMAX {
 
   /// Sets an extra parameter to the rewarded ad with the specified [adUnitId].
   static void setRewardedAdExtraParameter(String adUnitId, String key, String value) {
-    channel.invokeMethod('setRewardedAdExtraParameter', {
+    _methodChannel.invokeMethod('setRewardedAdExtraParameter', {
       'ad_unit_id': adUnitId,
       'key': key,
       'value': value,
@@ -688,27 +655,27 @@ class AppLovinMAX {
   //
 
   /// Sets a [AppOpenAdListener] listener with which you can receive notifications about ad events.
-  static void setAppOpenAdListener(AppOpenAdListener listener) {
+  static void setAppOpenAdListener(AppOpenAdListener? listener) {
     _appOpenAdListener = listener;
   }
 
   /// Check if the ad is ready to be shown with the specified [adUnitId].
   static Future<bool?> isAppOpenAdReady(String adUnitId) {
-    return channel.invokeMethod('isAppOpenAdReady', {
+    return _methodChannel.invokeMethod('isAppOpenAdReady', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Loads an app open ad using your [adUnitId].
   static void loadAppOpenAd(String adUnitId) {
-    channel.invokeMethod('loadAppOpenAd', {
+    _methodChannel.invokeMethod('loadAppOpenAd', {
       'ad_unit_id': adUnitId,
     });
   }
 
   /// Shows the app open ad with the specified [adUnitId].
-  static void showAppOpenAd(String adUnitId, {placement, customData}) {
-    channel.invokeMethod('showAppOpenAd', {
+  static void showAppOpenAd(String adUnitId, {String? placement, String? customData}) {
+    _methodChannel.invokeMethod('showAppOpenAd', {
       'ad_unit_id': adUnitId,
       'placement': placement,
       'custom_data': customData,
@@ -717,10 +684,99 @@ class AppLovinMAX {
 
   /// Sets an extra parameter to the rewarded ad with the specified [adUnitId].
   static void setAppOpenAdExtraParameter(String adUnitId, String key, String value) {
-    channel.invokeMethod('setAppOpenAdExtraParameter', {
+    _methodChannel.invokeMethod('setAppOpenAdExtraParameter', {
       'ad_unit_id': adUnitId,
       'key': key,
       'value': value,
     });
+  }
+
+  //
+  // AdView Preloading
+  //
+
+  /// Sets a [WidgetAdViewAdListener] to receive notifications about
+  /// [MaxAdView] ad events when preloading a [MaxAdView] platform widget with
+  /// [preloadWidgetAdView].
+  static void setWidgetAdViewAdListener(WidgetAdViewAdListener? listener) {
+    _widgetAdViewAdListener = listener;
+  }
+
+  /// Preloads a [MaxAdView] platform widget for the specified [adUnitId] with
+  /// the given [adFormat] before it is mounted in the widget tree.
+  ///
+  /// When you mount a [MaxAdView] with the preloaded [adUnitId], it will be
+  /// constructed using the preloaded [MaxAdView] platform widget, allowing ads
+  /// to be displayed more quickly. After unmounting the [MaxAdView], the
+  /// preloaded [MaxAdView] platform widget will not be destroyed; instead, it
+  /// will be reused for the next mount. You must manually destroy it when it is
+  /// no longer needed.
+  ///
+  /// You can preload only one [MaxAdView] platform widget for a single Ad Unit
+  /// ID. If you mount two [MaxAdView] widgets with the same Ad Unit ID, the
+  /// first [MaxAdView] will use the preloaded platform widget, while the second
+  /// [MaxAdView] will create its own platform widget and destroy it upon
+  /// unmounting.
+  ///
+  /// Returns a `Future<void>` that completes when the preload operation has
+  /// been successfully started. If the preload operation fails to start, the
+  /// `Future` completes with an error.
+  static Future<void> preloadWidgetAdView(
+    String adUnitId,
+    AdFormat adFormat, {
+    String? placement,
+    String? customData,
+    Map<String, String?>? extraParameters,
+    Map<String, dynamic>? localExtraParameters,
+  }) {
+    return _methodChannel.invokeMethod('preloadWidgetAdView', {
+      'ad_unit_id': adUnitId,
+      'ad_format': adFormat.value,
+      'placement': placement,
+      'custom_data': customData,
+      'extra_parameters': extraParameters,
+      'local_extra_parameters': localExtraParameters,
+    });
+  }
+
+  /// Destroys a [MaxAdView] platform widget for the specified [adUnitId].
+  ///
+  /// Returns a `Future<void>` that completes the destruction of the [MaxAdView]
+  /// platform widget. If the destruction operation fails, the `Future`
+  /// completes with an error.
+  static Future<void> destroyWidgetAdView(String adUnitId) {
+    return _methodChannel.invokeMethod('destroyWidgetAdView', {
+      'ad_unit_id': adUnitId,
+    });
+  }
+
+  //
+  // Segment Targeting
+  //
+
+  /// Adds a segment.
+  static void addSegment(int key, List<int> values) {
+    _methodChannel.invokeMethod('addSegment', {
+      'key': key,
+      'values': values,
+    });
+  }
+
+  /// Returns a list of the segments.
+  static Future<Map<int, List<int>>?> getSegments() async {
+    Map? untypedSegments = await _methodChannel.invokeMethod('getSegments');
+    if (untypedSegments == null) return null;
+
+    Map<int, List<int>> typedSegments = {};
+    untypedSegments.forEach((key, value) {
+      if (key is int && value is List) {
+        bool areAllInt = value.every((element) => element is int);
+        if (areAllInt) {
+          typedSegments[key] = List<int>.from(value);
+        }
+      }
+    });
+
+    return typedSegments;
   }
 }

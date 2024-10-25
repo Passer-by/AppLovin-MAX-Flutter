@@ -57,9 +57,9 @@ public class AppLovinMAXNativeAdView
     @Nullable
     private final String              customData;
     @Nullable
-    private       Map<String, Object> extraParameters;
+    private final Map<String, Object> extraParameters;
     @Nullable
-    private       Map<String, Object> localExtraParameters;
+    private final Map<String, Object> localExtraParameters;
 
     private final FrameLayout    nativeAdView;
     @Nullable
@@ -260,7 +260,7 @@ public class AppLovinMAXNativeAdView
             extends MaxNativeAdListener
     {
         @Override
-        public void onNativeAdLoaded(@Nullable final MaxNativeAdView nativeAdView, final MaxAd ad)
+        public void onNativeAdLoaded(@Nullable final MaxNativeAdView nativeAdView, @NonNull final MaxAd ad)
         {
             AppLovinMAX.d( "Native ad loaded: " + ad );
 
@@ -280,13 +280,13 @@ public class AppLovinMAXNativeAdView
         }
 
         @Override
-        public void onNativeAdLoadFailed(final String adUnitId, final MaxError error)
+        public void onNativeAdLoadFailed(@NonNull final String adUnitId, @NonNull final MaxError error)
         {
             handleAdLoadFailed( "Failed to load native ad for Ad Unit ID " + adUnitId + " with error: " + error, error );
         }
 
         @Override
-        public void onNativeAdClicked(final MaxAd ad)
+        public void onNativeAdClicked(@NonNull final MaxAd ad)
         {
             sendEvent( "OnNativeAdClickedEvent", ad );
         }
@@ -295,7 +295,7 @@ public class AppLovinMAXNativeAdView
     /// Ad Revenue Listener
 
     @Override
-    public void onAdRevenuePaid(final MaxAd ad)
+    public void onAdRevenuePaid(@NonNull final MaxAd ad)
     {
         sendEvent( "OnNativeAdRevenuePaidEvent", ad );
     }
@@ -310,11 +310,11 @@ public class AppLovinMAXNativeAdView
 
         if ( titleView == null )
         {
-            titleView = new View( context );
-            titleView.setTag( TITLE_LABEL_TAG );
+            titleView = new FrameLayout( context );
             nativeAdView.addView( titleView );
         }
 
+        titleView.setTag( TITLE_LABEL_TAG );
         clickableViews.add( titleView );
 
         updateViewLayout( nativeAdView, titleView, getRect( call ) );
@@ -328,11 +328,11 @@ public class AppLovinMAXNativeAdView
 
         if ( advertiserView == null )
         {
-            advertiserView = new View( context );
-            advertiserView.setTag( ADVERTISER_VIEW_TAG );
+            advertiserView = new FrameLayout( context );
             nativeAdView.addView( advertiserView );
         }
 
+        advertiserView.setTag( ADVERTISER_VIEW_TAG );
         clickableViews.add( advertiserView );
 
         updateViewLayout( nativeAdView, advertiserView, getRect( call ) );
@@ -346,11 +346,11 @@ public class AppLovinMAXNativeAdView
 
         if ( bodyView == null )
         {
-            bodyView = new View( context );
-            bodyView.setTag( BODY_VIEW_TAG );
+            bodyView = new FrameLayout( context );
             nativeAdView.addView( bodyView );
         }
 
+        bodyView.setTag( BODY_VIEW_TAG );
         clickableViews.add( bodyView );
 
         updateViewLayout( nativeAdView, bodyView, getRect( call ) );
@@ -364,11 +364,11 @@ public class AppLovinMAXNativeAdView
 
         if ( callToActionView == null )
         {
-            callToActionView = new View( context );
-            callToActionView.setTag( CALL_TO_ACTION_VIEW_TAG );
+            callToActionView = new FrameLayout( context );
             nativeAdView.addView( callToActionView );
         }
 
+        callToActionView.setTag( CALL_TO_ACTION_VIEW_TAG );
         clickableViews.add( callToActionView );
 
         updateViewLayout( nativeAdView, callToActionView, getRect( call ) );
@@ -379,8 +379,9 @@ public class AppLovinMAXNativeAdView
         if ( ad == null ) return;
 
         MaxNativeAd.MaxNativeAdImage icon = ad.getNativeAd().getIcon();
+        ImageView iconImageView = (ImageView) ad.getNativeAd().getIconView();
 
-        if ( icon == null )
+        if ( icon == null && iconImageView == null )
         {
             if ( iconView != null )
             {
@@ -393,21 +394,28 @@ public class AppLovinMAXNativeAdView
         if ( iconView == null )
         {
             iconView = new ImageView( context );
-            iconView.setTag( ICON_VIEW_TAG );
             nativeAdView.addView( iconView );
         }
 
+        iconView.setTag( ICON_VIEW_TAG );
         clickableViews.add( iconView );
 
         updateViewLayout( nativeAdView, iconView, getRect( call ) );
 
-        if ( icon.getUri() != null )
+        if ( icon != null )
         {
-            AppLovinSdkUtils.setImageUrl( icon.getUri().toString(), iconView, sdk );
+            if ( icon.getUri() != null )
+            {
+                AppLovinSdkUtils.setImageUrl( icon.getUri().toString(), iconView, sdk );
+            }
+            else if ( icon.getDrawable() != null )
+            {
+                iconView.setImageDrawable( icon.getDrawable() );
+            }
         }
-        else if ( icon.getDrawable() != null )
+        else if ( iconImageView != null )
         {
-            iconView.setImageDrawable( icon.getDrawable() );
+            iconView.setImageDrawable( iconImageView.getDrawable() );
         }
     }
 
@@ -447,9 +455,11 @@ public class AppLovinMAXNativeAdView
             mediaViewContainer = new RelativeLayout( context );
             // Sets an identifier for the Google adapters to verify the view in the tree
             mediaViewContainer.setId( MEDIA_VIEW_CONTAINER_TAG );
-            mediaViewContainer.setTag( MEDIA_VIEW_CONTAINER_TAG );
             nativeAdView.addView( mediaViewContainer );
         }
+
+        mediaViewContainer.setTag( MEDIA_VIEW_CONTAINER_TAG );
+        clickableViews.add( mediaViewContainer );
 
         Rect rect = getRect( call );
 
@@ -509,7 +519,7 @@ public class AppLovinMAXNativeAdView
 
         AppLovinMAX.e( message );
 
-        Map params = AppLovinMAX.getInstance().getAdLoadFailedInfo( adUnitId, error );
+        Map<String, Object> params = AppLovinMAX.getInstance().getAdLoadFailedInfo( adUnitId, error );
         AppLovinMAX.getInstance().fireCallback( "OnNativeAdLoadFailedEvent", params, channel );
     }
 
@@ -533,7 +543,7 @@ public class AppLovinMAXNativeAdView
             nativeAdInfo.put( "mediaContentAspectRatio", ad.getMediaContentAspectRatio() );
         }
 
-        nativeAdInfo.put( "isIconImageAvailable", ( ad.getIcon() != null ) );
+        nativeAdInfo.put( "isIconImageAvailable", ( ad.getIcon() != null || ad.getIconView() != null ) );
         nativeAdInfo.put( "isOptionsViewAvailable", ( ad.getOptionsView() != null ) );
         nativeAdInfo.put( "isMediaViewAvailable", ( ad.getMediaView() != null ) );
 

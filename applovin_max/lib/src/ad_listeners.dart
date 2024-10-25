@@ -1,4 +1,4 @@
-import 'package:applovin_max/applovin_max.dart';
+import 'package:applovin_max/src/ad_classes.dart';
 
 /// Defines a base listener to be notified about ad events.
 abstract class AdListener {
@@ -51,7 +51,7 @@ abstract class FullscreenAdListener extends AdListener {
         );
 }
 
-/// Defines an AdView ad (Banner / MREC) listener to be notified about ad view events.
+/// Defines an [AdView] ad (Banner / MREC) listener to be notified about ad view events.
 class AdViewAdListener extends AdListener {
   /// The SDK invokes this method when the [MaxAdView] has expanded to the full screen.
   final Function(MaxAd ad) onAdExpandedCallback;
@@ -75,7 +75,7 @@ class AdViewAdListener extends AdListener {
         );
 }
 
-/// Defines an NativeAdView ad listener to be notified about native ad view events.
+/// Defines a [NativeAdView] ad listener to be notified about native ad view events.
 class NativeAdListener extends AdListener {
   /// @nodoc
   const NativeAdListener({
@@ -159,4 +159,20 @@ class AppOpenAdListener extends FullscreenAdListener {
           onAdHiddenCallback: onAdHiddenCallback,
           onAdRevenuePaidCallback: onAdRevenuePaidCallback,
         );
+}
+
+/// Defines a platform widget listener for an [AdView] ad (Banner / MREC) to be
+/// notified about ad view events.
+class WidgetAdViewAdListener {
+  /// The SDK invokes this method when a new ad has been loaded.
+  final Function(MaxAd ad) onAdLoadedCallback;
+
+  /// The SDK invokes this method when an ad could not be retrieved.
+  final Function(String adUnitId, MaxError error) onAdLoadFailedCallback;
+
+  /// @nodoc
+  const WidgetAdViewAdListener({
+    required this.onAdLoadedCallback,
+    required this.onAdLoadFailedCallback,
+  });
 }
